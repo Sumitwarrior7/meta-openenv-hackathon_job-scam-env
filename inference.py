@@ -59,7 +59,7 @@ from constants import VALID_TASK_NAMES
 # ---------------------------------------------------------------------------
 
 # Options: "easy" | "medium" | "hard"
-TASK_NAME: str = "medium"
+TASK_NAME: str = "easy"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -83,8 +83,8 @@ _VALID_LABELS       = [l.value for l in ClassificationLabel]
 if TASK_NAME == "easy":
     # TODO: set easy-task max steps when task is designed
     # from constants import EASY_MAX_STEPS
-    # MAX_STEPS: int = EASY_MAX_STEPS
-    MAX_STEPS: int = 3  # placeholder
+    from constants import EASY_MAX_STEPS
+    MAX_STEPS: int = EASY_MAX_STEPS
 elif TASK_NAME == "medium":
     from constants import MEDIUM_MAX_STEPS
     MAX_STEPS: int = MEDIUM_MAX_STEPS
@@ -105,13 +105,16 @@ if TASK_NAME == "easy":
     # TODO: write an easy-task-specific system prompt when task is designed.
     # For now, a placeholder is used.
     _SYSTEM_PROMPT = textwrap.dedent("""
-    You are an expert job-scam investigator.
-    [EASY TASK — system prompt placeholder. Replace with easy-task instructions.]
+    You are an expert job scam detector.
 
-    Terminal action (must be your last action):
-      {"action_type": "classify", "label": "<legit|suspicious|scam|insufficient_info>"}
+    For this easy task,
+    read the message and classify it as either:
+    legit |scam
 
-    Output ONLY a valid JSON object. No surrounding text.
+    Output exactly one JSON object and nothing else.
+
+    Format:
+    {"action_type": "classify", "label": "<legit|scam>"}
     """).strip()
 elif TASK_NAME == "medium":
     _SYSTEM_PROMPT = textwrap.dedent("""
@@ -258,7 +261,7 @@ def _parse_action(response_text: str) -> Optional[JobScamAction]:
 
     label_str: Optional[str] = data.get("label")
 
-    if action_type_str == ActionType.CLASSIFY:
+    if action_type_str == ActionType.CLASSIFY or action_type_str == ActionType.CLASSIFY_EASY:
         if label_str not in _VALID_LABELS:
             return None
         return JobScamAction(
@@ -364,10 +367,11 @@ async def run_episode(env: JobScamEnv, llm_client: OpenAI) -> float:
         total_reward += reward
 
         # ── Record history (task-specific field naming) ───────────────────────
-        if action.action_type != ActionType.CLASSIFY:
+        if action.action_type != ActionType.CLASSIFY and action.action_type != ActionType.CLASSIFY_EASY:
             if TASK_NAME == "easy":
                 # TODO: derive field name for easy-task actions when designed
-                field_name = action.action_type.value.replace("request_", "")
+                # field_name = action.action_type.value.replace("request_", "")
+                pass
             elif TASK_NAME == "medium":
                 field_name = action.action_type.value.replace("request_", "")
                 requested_fields.append(field_name)
@@ -389,7 +393,15 @@ async def run_episode(env: JobScamEnv, llm_client: OpenAI) -> float:
         # ── Handle done ───────────────────────────────────────────────────────
         if result.done:
             if TASK_NAME == "easy":
-                break
+                info = obs.info or {}
+                print(f"\n  CLASSIFICATION RESULT")
+                print(f"    Step reward  : {reward:+.4f}")
+                print(f"    Predicted    : {obs.predicted_label}")
+                print(f"    Actual       : {obs.actual_label}")
+                correct = obs.predicted_label == obs.actual_label
+                print(f"    Correct      : {correct}\n")
+
+
             elif TASK_NAME == "medium":
                 info = obs.info or {}
                 if obs.reason == "timeout":

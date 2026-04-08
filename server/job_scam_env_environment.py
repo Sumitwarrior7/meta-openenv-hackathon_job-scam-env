@@ -61,7 +61,8 @@ try:
     from ..constants import (
         VALID_TASK_NAMES,
         # Easy
-        EASY_DATASET_FILENAME, EASY_ACTION_TO_FIELD,
+        EASY_DATASET_FILENAME, EASY_MAX_STEPS, EASY_REWARD_MATRIX,
+        EASY_ACTION_TO_FIELD, EASY_ALL_CONTEXT_FIELDS,
         # Medium
         MEDIUM_REWARD_MATRIX, MEDIUM_ACTION_TO_FIELD, MEDIUM_ALL_CONTEXT_FIELDS,
         MEDIUM_MAX_STEPS, MEDIUM_TIMEOUT_PENALTY, MEDIUM_DATASET_FILENAME,
@@ -168,7 +169,8 @@ class JobScamEnvironment(Environment):
         self._HARD_DATASET: Optional[List[Dict[str, Any]]] = None
 
     # ---------------------------------------------------------------- reset
-    def reset(self, task_name: str = "medium") -> JobScamObservation:
+
+    def reset(self, task_name: str = None) -> JobScamObservation:
         """
         Start a new episode with a randomly selected dataset sample.
 
@@ -215,8 +217,8 @@ class JobScamEnvironment(Environment):
 
         # ── Dispatch to task-specific step logic ─────────────────────────────
         if self._task_name == "easy":
-            ## Implement your own logic ##
-            pass
+            if action.action_type == ActionType.CLASSIFY_EASY:
+                return self._easy_handle_classify(action)
 
         elif self._task_name == "medium":
             if action.action_type == ActionType.CLASSIFY:
@@ -246,7 +248,7 @@ class JobScamEnvironment(Environment):
         Raise ValueError if the action_type does not belong to the active task
         (and is not the universal CLASSIFY action).
         """
-        if action.action_type == ActionType.CLASSIFY:
+        if action.action_type == ActionType.CLASSIFY or action.action_type == ActionType.CLASSIFY_EASY:
             return  # always valid
 
         if self._task_name == "easy":
@@ -269,54 +271,92 @@ class JobScamEnvironment(Environment):
     # EASY TASK implementation
     # =========================================================================
     def _easy_reset(self) -> JobScamObservation:
-        """
-        Reset the environment for an easy-task episode.
-
-        TODO: Implement when the easy task design is finalised.
-              Replace the NotImplementedError with the actual logic,
-              following the same pattern as _medium_reset().
-        """
-        # Lazy-load the easy dataset on first use
         if self._EASY_DATASET is None:
             self._EASY_DATASET = _load_dataset(EASY_DATASET_FILENAME)
 
-        # TODO: implement easy reset logic here
-        raise NotImplementedError(
-            "Easy task is not yet implemented. "
-            "Add the reset logic in _easy_reset() and update constants.py."
+        sample = random.choice(self._EASY_DATASET)
+
+        self._episode = {
+            "sample": sample,
+            "used_steps": 0,
+            "max_steps": EASY_MAX_STEPS,
+            "reward": 0.0,
+            "done": False,
+        }
+
+        return JobScamObservation(
+            task_name=self._task_name,
+            query_type=sample["query_type"],
+            initial_query=sample["initial_query"],
+            step_budget={
+                "total": EASY_MAX_STEPS,
+                "used": 0,
+                "remaining": EASY_MAX_STEPS,
+            },
+            episode_done=False,
+            done=False,
+            reward=0.0,
+            info={},
         )
 
-    def _easy_handle_field_request(self, action: JobScamAction) -> JobScamObservation:
-        """
-        Handle an information-gathering action for the easy task.
-
-        TODO: Implement when the easy task design is finalised.
-        """
-        raise NotImplementedError("Easy task field request not yet implemented.")
-
     def _easy_handle_classify(self, action: JobScamAction) -> JobScamObservation:
-        """
-        Handle the terminal classify action for the easy task.
 
-        TODO: Implement when the easy task design is finalised.
-        """
-        raise NotImplementedError("Easy task classify not yet implemented.")
+        predicted = action.label.value
+        ground_truth = self._episode["sample"]["ground_truth"]
 
-    def _easy_handle_timeout(self) -> JobScamObservation:
-        """
-        Handle step-budget exhaustion for the easy task.
+        if predicted not in EASY_REWARD_MATRIX:
+            raise ValueError(f"Invalid easy-task label: {predicted}")
 
-        TODO: Implement when the easy task design is finalised.
-        """
-        raise NotImplementedError("Easy task timeout not yet implemented.")
+        if ground_truth not in EASY_REWARD_MATRIX[predicted]:
+            raise ValueError(f"Invalid easy-task ground truth: {ground_truth}")
 
-    def _easy_compute_field_scores(self, sample: Dict[str, Any]) -> Dict[str, float]:
-        """
-        Compute signal scores for each field in an easy-task sample.
+        reward = EASY_REWARD_MATRIX[predicted][ground_truth]
 
-        TODO: Implement when the easy task design is finalised.
-        """
-        raise NotImplementedError("Easy task field score computation not yet implemented.")
+        self._episode["reward"] = round(
+            self._episode["reward"] + reward, 4
+        )
+        self._episode["done"] = True
+
+        return JobScamObservation(
+            task_name=self._task_name,
+            predicted_label=predicted,
+            actual_label=ground_truth,
+            step_budget=self._budget_dict(),
+            done=True,
+            episode_done=True,
+            reason="classification",
+            reward=reward,
+            info={
+                "reward": reward,
+            },
+        )
+
+    # def _easy_handle_timeout(self) -> JobScamObservation:
+
+    #     self._episode["total_reward"] = round(
+    #         self._episode["total_reward"] + EASY_TIMEOUT_PENALTY, 4
+    #     )
+    #     self._episode["done"] = True
+
+    #     return JobScamObservation(
+    #         task_name=self._task_name,
+    #         episode_done=True,
+    #         reason="timeout",
+    #         step_budget=self._budget_dict(),
+    #         done=True,
+    #         reward=EASY_TIMEOUT_PENALTY,
+    #         info={
+    #             "reward_breakdown": {
+    #                 "classification_reward": 0.0,
+    #                 "timeout_penalty": EASY_TIMEOUT_PENALTY,
+    #             },
+    #             "cumulative": {
+    #                 "info_reward_total": self._episode["info_reward_total"],
+    #                 "classification_reward_total": self._episode["classification_reward_total"],
+    #                 "total_reward": self._episode["total_reward"],
+    #             },
+    #         },
+    #     )
 
     # =========================================================================
     # MEDIUM TASK implementation  (original logic, now under _medium_* names)

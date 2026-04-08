@@ -22,14 +22,23 @@ VALID_TASK_NAMES: List[str] = ["easy", "medium", "hard"]
 # ===========================================================================
 # EASY TASK constants  (placeholders — fill in when easy task is designed)
 # ===========================================================================
-# EASY_MAX_STEPS: int = 3
-# EASY_TIMEOUT_PENALTY: float = -1.5
+EASY_MAX_STEPS: int = 1
+# EASY_TIMEOUT_PENALTY: float = -1.0
 EASY_DATASET_FILENAME: str = "data_task_easy.jsonl"
 
-# EASY_REWARD_MATRIX: Dict[str, Dict[str, float]] = {}
-EASY_ACTION_TO_FIELD: Dict[str, str] = {}
-# EASY_ALL_CONTEXT_FIELDS: List[str] = []
+EASY_REWARD_MATRIX: Dict[str, Dict[str, float]] = {
+    "legit": {
+        "legit": 1.00,
+        "scam": -1.00,
+    },
+    "scam": {
+        "legit": -0.60,
+        "scam": 1.00,
+    },
+}
 
+EASY_ACTION_TO_FIELD: Dict[str, str] = {}
+EASY_ALL_CONTEXT_FIELDS: List[str] = []
 
 # ===========================================================================
 # MEDIUM TASK constants  (the original / current task)
