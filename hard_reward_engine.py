@@ -20,10 +20,16 @@ class HardRewardEngine:
             if self._flagged(scratchpad, rule.get("condition", "")):
                 reward += float(rule.get("reward", 0.0))
 
+        # =====================================================
+        # Sparse rewards
+        # =====================================================
         for rule in reward_logic.get("sparse_rewards", []):
             if self._flagged(scratchpad, rule.get("condition", "")):
                 reward += float(rule.get("reward", 0.0))
 
+        # =====================================================
+        # Penalties
+        # =====================================================
         for rule in reward_logic.get("penalties", []):
             if self._flagged(scratchpad, rule.get("condition", "")):
                 reward += float(rule.get("reward", 0.0))

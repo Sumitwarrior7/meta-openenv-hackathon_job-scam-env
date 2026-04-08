@@ -27,6 +27,7 @@ from client import JobScamEnv
 from models import ActionType, ClassificationLabel, JobScamAction, JobScamObservation
 from constants import VALID_TASK_NAMES, EASY_MAX_STEPS, MEDIUM_MAX_STEPS, HARD_MAX_STEPS
 
+print(f"[TASK SELECTED] {TASK_NAME}")
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -191,6 +192,8 @@ _SYSTEM_PROMPTS: Dict[str, str] = {
         Output ONLY one valid JSON object.
     """).strip(),
 }
+
+
 
 
 

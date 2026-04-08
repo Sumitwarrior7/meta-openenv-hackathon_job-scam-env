@@ -37,6 +37,8 @@ import os
 import uvicorn
 from dotenv import load_dotenv
 
+load_dotenv()
+
 try:
     print("importing openenv!!")
     from openenv.core.env_server.http_server import create_app

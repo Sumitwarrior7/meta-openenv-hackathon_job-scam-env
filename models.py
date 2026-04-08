@@ -217,9 +217,9 @@ class JobScamObservation(Observation):
         default=None,
         description="[Medium] Name of the context field that was just returned.",
     )
-    field_content: Optional[str] = Field(
+    field_content: Optional[Any] = Field(
         default=None,
-        description="[Medium] Raw text content of the requested context field.",
+        description="[Medium/Hard] Raw content of the requested context field. May be text or structured data.",
     )
 
     # ── EASY TASK ─────────────────

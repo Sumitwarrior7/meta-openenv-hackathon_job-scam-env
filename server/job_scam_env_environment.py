@@ -144,7 +144,7 @@ def _load_dataset(dataset_filename: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-class JobScamEnvironment(Environment):
+class JobScamEnvironment(HardSchemaMixin, Environment):
     """
     Step-based job scam investigation environment supporting three task variants.
 
@@ -700,7 +700,7 @@ class JobScamEnvironment(Environment):
                     "total_reward": self._episode["total_reward"]
                 },
             },
-        )
+    )
 
 
     def _hard_handle_classify(self, action: JobScamAction) -> JobScamObservation:
@@ -737,6 +737,7 @@ class JobScamEnvironment(Environment):
             reason="classification",
             reward=terminal_reward,
             info={
+                "reward_breakdown": reward_result["reward_breakdown"],
                 "grading": grading,
                 "reward_breakdown": {
                     "terminal_reward": terminal_reward,
@@ -745,7 +746,7 @@ class JobScamEnvironment(Environment):
                     "total_reward": self._episode["total_reward"]
                 },
             },
-        )
+    )
 
     def _hard_handle_timeout(self) -> JobScamObservation:
         """
