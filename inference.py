@@ -2,41 +2,15 @@
 Inference Script — Job Scam Detection Environment
 ==================================================
 
-An LLM-driven agent that plays one episode of the JobScamEnvironment by
-investigating a job opportunity and submitting a classification label.
-
-Task selection
---------------
-Set the ``TASK_NAME`` variable below to choose which difficulty variant runs.
-Allowed values: "easy" | "medium" | "hard".  Defaults to "medium".
+An LLM-driven agent that plays episodes of the JobScamEnvironment for ALL
+task variants (easy, medium, hard) in a single invocation, emitting
+structured [START] / [STEP] / [END] logs that the validator parses.
 
 Required environment variables
 -------------------------------
 API_BASE_URL   API endpoint for the LLM (e.g. https://router.huggingface.co/v1).
 MODEL_NAME     Model identifier (e.g. Qwen/Qwen2.5-72B-Instruct).
 HF_TOKEN       Hugging Face / API key.
-
-The script uses the OpenAI-compatible client for all LLM calls, as required
-by the submission spec.
-
-Agent strategy (medium task)
------------------------------
-1. Parse the initial observation (query type + raw query text).
-2. Use the LLM to decide which context field to request next, or to
-   classify if enough evidence has been gathered.
-3. Parse the LLM response as a JSON action object.
-4. Step the environment, print the reward breakdown.
-5. Repeat until ``done=True``.
-
-Action JSON format expected from the LLM
------------------------------------------
-Info request (medium)::
-
-    {"action_type": "request_company_profile"}
-
-Classification (all tasks)::
-
-    {"action_type": "classify", "label": "scam"}
 """
 
 from __future__ import annotations
@@ -52,175 +26,179 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from client import JobScamEnv
 from models import ActionType, ClassificationLabel, JobScamAction, JobScamObservation
-from constants import VALID_TASK_NAMES
-
-# ---------------------------------------------------------------------------
-# Task selection — change this variable to switch between task variants
-# ---------------------------------------------------------------------------
-
-# Options: "easy" | "medium" | "hard"
-TASK_NAME: str = "easy"
+from constants import VALID_TASK_NAMES, EASY_MAX_STEPS, MEDIUM_MAX_STEPS, HARD_MAX_STEPS
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 load_dotenv()
-API_BASE_URL: str       = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-API_KEY: Optional[str]  = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-MODEL_NAME: Optional[str] = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-IMAGE_NAME: Optional[str] = os.getenv("IMAGE_NAME", "job_scam_env-env:latest")
+API_BASE_URL:  str           = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+API_KEY:       Optional[str] = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME:    Optional[str] = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+LOCAL_IMAGE_NAME: Optional[str] = os.getenv("LOCAL_IMAGE_NAME", "job_scam_env:latest")
 
+BENCHMARK:   str   = "job_scam_detection"
 TEMPERATURE: float = 0.2
 MAX_TOKENS:  int   = 300
+
+# ---------------------------------------------------------------------------
+# All tasks to run — validator requires one [START]/[END] pair per task
+# ---------------------------------------------------------------------------
+TASKS: List[tuple[str, str, int]] = [
+    ("task_easy",   "easy",   EASY_MAX_STEPS),
+    ("task_medium", "medium", MEDIUM_MAX_STEPS),
+    # ("task_hard",   "hard",   HARD_MAX_STEPS),
+]
 
 _VALID_ACTION_TYPES = [a.value for a in ActionType]
 _VALID_LABELS       = [l.value for l in ClassificationLabel]
 
 # ---------------------------------------------------------------------------
-# Task-specific: max steps
+# Structured log helpers  (validator-required stdout format)
 # ---------------------------------------------------------------------------
 
-if TASK_NAME == "easy":
-    # TODO: set easy-task max steps when task is designed
-    # from constants import EASY_MAX_STEPS
-    from constants import EASY_MAX_STEPS
-    MAX_STEPS: int = EASY_MAX_STEPS
-elif TASK_NAME == "medium":
-    from constants import MEDIUM_MAX_STEPS
-    MAX_STEPS: int = MEDIUM_MAX_STEPS
-elif TASK_NAME == "hard":
-    # TODO: set hard-task max steps when task is designed
-    # from constants import HARD_MAX_STEPS
-    # MAX_STEPS: int = HARD_MAX_STEPS
-    MAX_STEPS: int = 8  # placeholder
-else:
-    raise ValueError(
-        f"Unknown TASK_NAME '{TASK_NAME}'. Must be one of: {VALID_TASK_NAMES}."
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(
+    step: int,
+    action: str,
+    reward: float,
+    done: bool,
+    error: Optional[str] = None,
+) -> None:
+    done_str  = "true" if done  else "false"
+    error_str = error if error is not None else "null"
+    print(
+        f"[STEP] step={step} action={action} "
+        f"done={done_str} error={error_str}",
+        flush=True,
     )
 
-# ---------------------------------------------------------------------------
-# Task-specific: system prompt
-# ---------------------------------------------------------------------------
-if TASK_NAME == "easy":
-    # TODO: write an easy-task-specific system prompt when task is designed.
-    # For now, a placeholder is used.
-    _SYSTEM_PROMPT = textwrap.dedent("""
-    You are an expert job scam detector.
 
-    For this easy task,
-    read the message and classify it as either:
-    legit |scam
+def log_end(
+    task: str,
+    success: bool,
+    steps: int,
+    score: float,
+) -> None:
+    success_str  = "true" if success else "false"
+    print(
+        f"[END] task={task} success={success_str} steps={steps} "
+        f"score={score:.4f}",
+        flush=True,
+    )
 
-    Output exactly one JSON object and nothing else.
-
-    Format:
-    {"action_type": "classify", "label": "<legit|scam>"}
-    """).strip()
-elif TASK_NAME == "medium":
-    _SYSTEM_PROMPT = textwrap.dedent("""
-    You are an expert job-scam investigator.
-    Your task is to analyse a job opportunity and classify it as one of:
-      legit | suspicious | scam | insufficient_info
-
-    You have up to 5 steps per episode. Each step you must output exactly one
-    JSON object — nothing else, no markdown, no explanation.
-
-    AVAILABLE ACTIONS
-    -----------------
-    Information requests (use these to gather evidence before classifying):
-      {"action_type": "request_recruiter_profile"}
-      {"action_type": "request_company_profile"}
-      {"action_type": "request_thread_history"}
-      {"action_type": "request_job_post_comments"}
-
-    Terminal action (must be your last action):
-      {"action_type": "classify", "label": "<legit|suspicious|scam|insufficient_info>"}
-
-    STRATEGY GUIDELINES
-    -------------------
-    - Look for red flags: payment requests, off-platform contact (WhatsApp/Telegram),
-      government ID requests, urgency pressure, evasion tactics, gmail sender for MNC.
-    - Look for green flags: official domain, no-fee statements, portal-only hiring,
-      anti-scam guidance.
-    - Classify as soon as you have enough evidence — earlier correct classification
-      earns a timing bonus.
-    - Do NOT request the same field twice — it incurs a -0.20 penalty.
-    - Do NOT use classify before you have enough evidence.
-    - Output ONLY a valid JSON object. No surrounding text.
-    """).strip()
-elif TASK_NAME == "hard":
-    # TODO: write a hard-task-specific system prompt when task is designed.
-    # For now, a placeholder is used.
-    _SYSTEM_PROMPT = textwrap.dedent("""
-    You are an expert job-scam investigator.
-    [HARD TASK — system prompt placeholder. Replace with hard-task instructions.]
-
-    Terminal action (must be your last action):
-      {"action_type": "classify", "label": "<legit|suspicious|scam|insufficient_info>"}
-
-    Output ONLY a valid JSON object. No surrounding text.
-    """).strip()
+def normalize_one(x):
+    return int(x) if float(x) == 1.0 else x
 
 # ---------------------------------------------------------------------------
-# Task-specific: fallback action priority
+# System prompts (per task)
 # ---------------------------------------------------------------------------
-if TASK_NAME == "easy":
-    # TODO: define the easy-task fallback priority order when task is designed.
-    # For now, only classify is available as fallback.
-    _FALLBACK_PRIORITY: List[ActionType] = []
-elif TASK_NAME == "medium":
-    _FALLBACK_PRIORITY: List[ActionType] = [
+_SYSTEM_PROMPTS: Dict[str, str] = {
+    "easy": textwrap.dedent("""
+        You are an expert job scam detector.
+
+        For this easy task, read the message and classify it as either:
+          legit | scam
+
+        Output exactly one JSON object and nothing else.
+
+        Format:
+        {"action_type": "classify", "label": "<legit|scam>"}
+    """).strip(),
+
+    "medium": textwrap.dedent("""
+        You are an expert job-scam investigator.
+        Your task is to analyse a job opportunity and classify it as one of:
+          legit | suspicious | scam | insufficient_info
+
+        You have up to 5 steps per episode. Each step you must output exactly one
+        JSON object — nothing else, no markdown, no explanation.
+
+        AVAILABLE ACTIONS
+        -----------------
+        Information requests (use these to gather evidence before classifying):
+          {"action_type": "request_recruiter_profile"}
+          {"action_type": "request_company_profile"}
+          {"action_type": "request_thread_history"}
+          {"action_type": "request_job_post_comments"}
+
+        Terminal action (must be your last action):
+          {"action_type": "classify", "label": "<legit|suspicious|scam|insufficient_info>"}
+
+        STRATEGY GUIDELINES
+        -------------------
+        - Look for red flags: payment requests, off-platform contact (WhatsApp/Telegram),
+          government ID requests, urgency pressure, evasion tactics, gmail sender for MNC.
+        - Look for green flags: official domain, no-fee statements, portal-only hiring,
+          anti-scam guidance.
+        - Classify as soon as you have enough evidence — earlier correct classification
+          earns a timing bonus.
+        - Do NOT request the same field twice — it incurs a -0.20 penalty.
+        - Do NOT use classify before you have enough evidence.
+        - Output ONLY a valid JSON object. No surrounding text.
+    """).strip(),
+
+    "hard": textwrap.dedent("""
+        You are an expert job-scam investigator.
+        [HARD TASK — system prompt placeholder. Replace with hard-task instructions.]
+
+        Terminal action (must be your last action):
+          {"action_type": "classify", "label": "<legit|suspicious|scam|insufficient_info>"}
+
+        Output ONLY a valid JSON object. No surrounding text.
+    """).strip(),
+}
+
+# ---------------------------------------------------------------------------
+# Fallback action priority (per task)
+# ---------------------------------------------------------------------------
+_FALLBACK_PRIORITY: Dict[str, List[ActionType]] = {
+    "easy": [],
+    "medium": [
         ActionType.REQUEST_COMPANY_PROFILE,
         ActionType.REQUEST_RECRUITER_PROFILE,
         ActionType.REQUEST_THREAD_HISTORY,
         ActionType.REQUEST_JOB_POST_COMMENTS,
-    ]
-elif TASK_NAME == "hard":
-    # TODO: define the hard-task fallback priority order when task is designed.
-    _FALLBACK_PRIORITY: List[ActionType] = []
-
+    ],
+    "hard": [],
+}
 
 # ---------------------------------------------------------------------------
 # User message builder
 # ---------------------------------------------------------------------------
+
 def _build_user_message(
     step: int,
     obs: JobScamObservation,
     history: List[str],
+    task_name: str,
+    max_steps: int,
 ) -> str:
-    """Construct the user-turn message for the LLM at each step."""
     step_budget = obs.step_budget
     if isinstance(step_budget, dict):
-        remaining = step_budget.get("remaining", MAX_STEPS - step)
+        remaining = step_budget.get("remaining", max_steps - step)
     else:
-        remaining = MAX_STEPS - step
+        remaining = max_steps - step
 
     parts: List[str] = [
-        f"TASK: {obs.task_name or TASK_NAME}",
+        f"TASK: {obs.task_name or task_name}",
         f"STEP: {step}",
         f"STEPS REMAINING: {remaining}",
         "",
     ]
 
-    # ── Initial query (always present) ──────────────────────────────────────
     if obs.query_type:
         parts.append(f"QUERY TYPE: {obs.query_type}")
     if obs.initial_query:
         parts.append(f"INITIAL QUERY:\n{obs.initial_query}")
 
-    # ── Task-specific field content display ──────────────────────────────────
-    if TASK_NAME == "easy":
-        # TODO: add easy-task-specific field display here when task is designed
-        pass
-
-    elif TASK_NAME == "medium":
+    if task_name == "medium":
         if obs.requested_field and obs.field_content:
             parts.append(f"\nFIELD JUST RECEIVED — {obs.requested_field.upper()}:")
             parts.append(obs.field_content)
-
-    elif TASK_NAME == "hard":
-        # TODO: add hard-task-specific field display here when task is designed
-        pass
 
     if history:
         parts.append("\nACTIONS TAKEN SO FAR:")
@@ -239,17 +217,11 @@ def _build_user_message(
 # ---------------------------------------------------------------------------
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 
-def _parse_action(response_text: str) -> Optional[JobScamAction]:
-    """
-    Extract the first JSON object from the LLM response and validate it
-    as a ``JobScamAction``.
 
-    Returns ``None`` if parsing fails (caller will apply a fallback).
-    """
+def _parse_action(response_text: str) -> Optional[JobScamAction]:
     match = _JSON_RE.search(response_text)
     if not match:
         return None
-
     try:
         data = json.loads(match.group(0))
     except json.JSONDecodeError:
@@ -261,7 +233,7 @@ def _parse_action(response_text: str) -> Optional[JobScamAction]:
 
     label_str: Optional[str] = data.get("label")
 
-    if action_type_str == ActionType.CLASSIFY or action_type_str == ActionType.CLASSIFY_EASY:
+    if action_type_str in (ActionType.CLASSIFY, ActionType.CLASSIFY_EASY):
         if label_str not in _VALID_LABELS:
             return None
         return JobScamAction(
@@ -274,65 +246,67 @@ def _parse_action(response_text: str) -> Optional[JobScamAction]:
 
     return JobScamAction(action_type=ActionType(action_type_str))
 
-def _fallback_action(step: int, requested: List[str]) -> JobScamAction:
-    """
-    Heuristic fallback when the LLM produces an unparseable response.
 
-    Requests the next unrequested field in the task-specific priority order,
-    or defaults to ``insufficient_info`` if all fields have been requested.
-    """
-    if TASK_NAME == "easy":
-        # TODO: implement easy-task fallback logic when task is designed
-        pass
-
-    elif TASK_NAME == "medium":
-        for action_type in _FALLBACK_PRIORITY:
-            field = action_type.value.replace("request_", "")
-            if field not in requested:
-                return JobScamAction(action_type=action_type)
-
-    elif TASK_NAME == "hard":
-        # TODO: implement hard-task fallback logic when task is designed
-        pass
-
-    # All fields seen or last step — safe default
+def _fallback_action(task_name: str, requested: List[str]) -> JobScamAction:
+    for action_type in _FALLBACK_PRIORITY.get(task_name, []):
+        field = action_type.value.replace("request_", "")
+        if field not in requested:
+            return JobScamAction(action_type=action_type)
     return JobScamAction(
         action_type=ActionType.CLASSIFY,
         label=ClassificationLabel.INSUFFICIENT_INFO,
     )
 
+
 # ---------------------------------------------------------------------------
-# Main episode loop
+# Single episode runner
 # ---------------------------------------------------------------------------
-async def run_episode(env: JobScamEnv, llm_client: OpenAI) -> float:
+
+async def run_episode(
+    env: JobScamEnv,
+    llm_client: OpenAI,
+    task_id: str,
+    task_name: str,
+    max_steps: int,
+) -> tuple[bool, int, float, List[float]]:
     """
-    Run a single episode to completion and return the total reward.
-    ``env`` is the live async client, already connected via ``async with``.
+    Run one episode for the given task variant.
+
+    Returns (success, steps_taken, total_reward, per_step_rewards).
+    Emits [STEP] lines to stdout.
     """
-    # Reset with the chosen task variant
-    result = await env.reset(task_name=TASK_NAME)
+    result = await env.reset(task_name=task_name)
     obs    = result.observation
 
-    history: List[str]         = []
-    requested_fields: List[str] = []
-    total_reward: float          = 0.0
-    initial_query_text           = obs.initial_query or ""
+    history:          List[str]   = []
+    requested_fields: List[str]   = []
+    per_step_rewards: List[float] = []
+    total_reward:     float       = 0.0
+    success:          bool        = False
+    steps_taken:      int         = 0
 
+    initial_query_text = obs.initial_query or ""
     print(f"\n{'='*60}")
-    print(f"NEW EPISODE  [task: {TASK_NAME}]")
+    print(f"NEW EPISODE  [task_id={task_id}  task_name={task_name}]")
     print(f"Query type : {obs.query_type}")
     print(f"Initial    : {initial_query_text[:120]}...")
     print(f"{'='*60}")
 
-    for step in range(1, MAX_STEPS + 1):
-        # ── Build LLM messages ────────────────────────────────────────────────
-        user_msg = _build_user_message(step, obs, history)
+    system_prompt = _SYSTEM_PROMPTS[task_name]
+
+    for step in range(1, max_steps + 1):
+        steps_taken = step
+        step_error:  Optional[str] = None
+
+        # ── Build LLM messages ──────────────────────────────────────────────
+        user_msg = _build_user_message(step, obs, history, task_name, max_steps)
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_msg},
         ]
 
-        # ── Call LLM ─────────────────────────────────────────────────────────
+        # ── Call LLM ───────────────────────────────────────────────────────
+        response_text = ""
         try:
             completion = llm_client.chat.completions.create(
                 model=MODEL_NAME,
@@ -343,36 +317,43 @@ async def run_episode(env: JobScamEnv, llm_client: OpenAI) -> float:
             )
             response_text = completion.choices[0].message.content or ""
         except Exception as exc:
+            step_error = str(exc)
             print(f"  [Step {step}] LLM error: {exc}. Using fallback.")
-            response_text = ""
 
-        # ── Parse action ──────────────────────────────────────────────────────
+        # ── Parse action ────────────────────────────────────────────────────
         action = _parse_action(response_text)
         if action is None:
             print(
                 f"  [Step {step}] Unparseable response: "
                 f"{response_text!r:.80}. Using fallback."
             )
-            action = _fallback_action(step, requested_fields)
+            action = _fallback_action(task_name, requested_fields)
 
-        print(
-            f"\n[Step {step}] Action: {action.action_type.value}"
-            + (f"  label={action.label.value}" if action.label else "")
-        )
+        action_str = action.action_type.value
+        if action.label:
+            action_str += f":{action.label.value}"
 
-        # ── Step environment ──────────────────────────────────────────────────
+        # ── Step environment ────────────────────────────────────────────────
         result       = await env.step(action)
         obs          = result.observation
         reward       = result.reward or 0.0
         total_reward += reward
+        per_step_rewards.append(reward)
+        normalised_reward = 0
 
-        # ── Record history (task-specific field naming) ───────────────────────
-        if action.action_type != ActionType.CLASSIFY and action.action_type != ActionType.CLASSIFY_EASY:
-            if TASK_NAME == "easy":
+        is_done = bool(result.done)
+
+        # ── Emit structured [STEP] log ──────────────────────────────────────
+        log_step(step=step, action=action_str, reward=reward, done=is_done, error=step_error)
+
+        # ── Track history for info-request actions ──────────────────────────
+        is_classify = action.action_type in (ActionType.CLASSIFY, ActionType.CLASSIFY_EASY)
+        if not is_classify:
+            if task_name == "easy":
                 # TODO: derive field name for easy-task actions when designed
                 # field_name = action.action_type.value.replace("request_", "")
                 pass
-            elif TASK_NAME == "medium":
+            elif task_name == "medium":
                 field_name = action.action_type.value.replace("request_", "")
                 requested_fields.append(field_name)
                 history.append(
@@ -385,67 +366,99 @@ async def run_episode(env: JobScamEnv, llm_client: OpenAI) -> float:
                     print(f"         Breakdown      : {info['reward_breakdown']}")
                 if info.get("cumulative"):
                     print(f"         Cumulative     : {info['cumulative']}")
-            elif TASK_NAME == "hard":
+            elif task_name == "hard":
                 # TODO: derive field name for hard-task actions when designed
-                field_name = action.action_type.value.replace("request_", "")
+                # field_name = action.action_type.value.replace("request_", "")
+                pass
 
-
-        # ── Handle done ───────────────────────────────────────────────────────
-        if result.done:
-            if TASK_NAME == "easy":
-                info = obs.info or {}
+        # ── Handle done ─────────────────────────────────────────────────────
+        if is_done:
+            if task_name == "easy":
+                normalised_reward = reward
+                correct = obs.predicted_label == obs.actual_label
+                success = bool(correct)
                 print(f"\n  CLASSIFICATION RESULT")
                 print(f"    Step reward  : {reward:+.4f}")
                 print(f"    Predicted    : {obs.predicted_label}")
                 print(f"    Actual       : {obs.actual_label}")
-                correct = obs.predicted_label == obs.actual_label
                 print(f"    Correct      : {correct}\n")
-
-
-            elif TASK_NAME == "medium":
+                break
+            elif task_name == "medium":
+                normalised_reward = reward
                 info = obs.info or {}
                 if obs.reason == "timeout":
+                    success = False
                     print(f"\n  TIMEOUT — all steps exhausted without classifying.")
-                    print(f"  Timeout penalty: {info['reward_breakdown']['timeout_penalty']:+.4f}")
-                    print(f"  Step Reward    : {reward:+.4f}")
+                    print(f"    Timeout penalty: {info['reward_breakdown']['timeout_penalty']:+.4f}")
+                    print(f"    Step Reward    : {reward:+.4f}")
+                    print(f"    Correct   : False")
                 else:
+                    correct = obs.predicted_label == obs.actual_label
+                    success = bool(correct)
                     print(f"\n  CLASSIFICATION RESULT")
                     print(f"    Step reward  : {reward:+.4f}")
-                    print(f"    Predicted    : {obs.predicted_label}")
-                    print(f"    Actual       : {obs.actual_label}")
-                    correct = obs.predicted_label == obs.actual_label
-                    print(f"    Correct      : {correct}\n")
+                    print(f"    Predicted : {obs.predicted_label}")
+                    print(f"    Actual    : {obs.actual_label}")
+                    print(f"    Correct   : {correct}")
                     if info.get("reward_breakdown"):
-                        print(f"    Breakdown      : {info['reward_breakdown']}")
+                        print(f"    Breakdown   : {info['reward_breakdown']}")
                     if info.get("cumulative"):
-                        print(f"    Episode total  : {info['cumulative']}")
+                        print(f"    Cumulative  : {info['cumulative']}")
                 break
-            elif TASK_NAME == "hard":
+            elif task_name == "hard":
+                normalised_reward = 0
                 break
 
-    print(f"\nEpisode finished!!")
-    return total_reward
 
+    print(f"\nEpisode finished — task={task_id}")
+    return success, steps_taken, normalised_reward, per_step_rewards
+
+
+# ---------------------------------------------------------------------------
+# Main — iterate over ALL tasks in a single invocation
+# ---------------------------------------------------------------------------
 
 async def main() -> None:
-    """
-    Entry point: spin up the Docker container, run one episode, then tear down.
-    """
     if not API_KEY:
         raise EnvironmentError("HF_TOKEN or API_KEY environment variable must be set.")
     if not MODEL_NAME:
         raise EnvironmentError("MODEL_NAME environment variable must be set.")
-    if TASK_NAME not in VALID_TASK_NAMES:
-        raise ValueError(
-            f"Invalid TASK_NAME '{TASK_NAME}'. Must be one of: {VALID_TASK_NAMES}."
-        )
 
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    env = await JobScamEnv.from_docker_image(IMAGE_NAME)
+    env = await JobScamEnv.from_docker_image(LOCAL_IMAGE_NAME)
 
     async with env:
-        await run_episode(env, llm_client)
+        for task_id, task_name, max_steps in TASKS:
+            # Emit [START] before the episode
+            log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+
+            success      = False
+            steps_taken  = 0
+            # total_reward = 0.0
+            # rewards_list: List[float] = []
+            try:
+                success, steps_taken, normalised_reward, rewards_list = await run_episode(
+                    env=env,
+                    llm_client=llm_client,
+                    task_id=task_id,
+                    task_name=task_name,
+                    max_steps=max_steps,
+                )
+            except Exception as exc:
+                # Log the crash but always emit [END]
+                print(f"  [FATAL] task={task_id} crashed: {exc}", flush=True)
+                # if not rewards_list:
+                #     rewards_list = [0.0]
+            finally:
+                log_end(
+                    task=task_id,
+                    success=success,
+                    steps=steps_taken,
+                    score=normalize_one(normalised_reward),
+                    # rewards=rewards_list if rewards_list else [0.0],
+                )
+                print("\n\n")
 
 
 if __name__ == "__main__":

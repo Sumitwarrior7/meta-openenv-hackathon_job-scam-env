@@ -90,7 +90,7 @@ MEDIUM_ALL_CONTEXT_FIELDS: List[str] = list(MEDIUM_ACTION_TO_FIELD.values())
 # ===========================================================================
 # HARD TASK constants  (placeholders — fill in when hard task is designed)
 # ===========================================================================
-# HARD_MAX_STEPS: int = 7
+HARD_MAX_STEPS: int = 7
 # HARD_TIMEOUT_PENALTY: float = -1.5
 HARD_DATASET_FILENAME: str = "data_task_hard.jsonl"
 

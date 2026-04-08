@@ -160,13 +160,9 @@ class JobScamEnvironment(Environment):
         self._task_name: str = "medium"
 
         # ── Datasets — loaded once per process ──────────────────────────────
-        # Medium dataset is always loaded (it ships with the package).
         self._MEDIUM_DATASET: List[Dict[str, Any]] = _load_dataset(MEDIUM_DATASET_FILENAME)
-
-        # Easy / hard datasets are loaded lazily on first use so the server
-        # starts even when those JSONL files are not yet present.
-        self._EASY_DATASET: Optional[List[Dict[str, Any]]] = None
-        self._HARD_DATASET: Optional[List[Dict[str, Any]]] = None
+        self._EASY_DATASET: List[Dict[str, Any]] = _load_dataset(EASY_DATASET_FILENAME)
+        self._HARD_DATASET: List[Dict[str, Any]] = _load_dataset(HARD_DATASET_FILENAME)
 
     # ---------------------------------------------------------------- reset
 
@@ -180,6 +176,11 @@ class JobScamEnvironment(Environment):
             Which task variant to run.  Must be one of: easy, medium, hard.
             Defaults to "medium" for backward compatibility.
         """
+        # Select a random task if None is provided
+        if not task_name:
+            random_task = random.choice(VALID_TASK_NAMES)
+            task_name = random_task
+
         if task_name not in VALID_TASK_NAMES:
             raise ValueError(
                 f"Unknown task_name '{task_name}'. "
@@ -271,9 +272,6 @@ class JobScamEnvironment(Environment):
     # EASY TASK implementation
     # =========================================================================
     def _easy_reset(self) -> JobScamObservation:
-        if self._EASY_DATASET is None:
-            self._EASY_DATASET = _load_dataset(EASY_DATASET_FILENAME)
-
         sample = random.choice(self._EASY_DATASET)
 
         self._episode = {
@@ -592,9 +590,6 @@ class JobScamEnvironment(Environment):
               Replace the NotImplementedError with the actual logic,
               following the same pattern as _medium_reset().
         """
-        # Lazy-load the hard dataset on first use
-        if self._HARD_DATASET is None:
-            self._HARD_DATASET = _load_dataset(HARD_DATASET_FILENAME)
 
         # TODO: implement hard reset logic here
         raise NotImplementedError(

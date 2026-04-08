@@ -84,7 +84,7 @@ class JobScamEnv(EnvClient[JobScamAction, JobScamObservation, State]):
 
     # ------------------------------------------------------------------ reset
 
-    async def reset(self, task_name: str = "medium") -> StepResult[JobScamObservation]:
+    async def reset(self, task_name: str = None) -> StepResult[JobScamObservation]:
         """
         Start a new episode on the server.
 
@@ -100,6 +100,10 @@ class JobScamEnv(EnvClient[JobScamAction, JobScamObservation, State]):
             The initial observation containing query_type, initial_query,
             available_context, step_budget, and task_name.
         """
+        if not task_name:
+            raise ValueError(
+                f"Please provide a task_name."
+            )
         if task_name not in VALID_TASK_NAMES:
             raise ValueError(
                 f"Unknown task_name '{task_name}'. "

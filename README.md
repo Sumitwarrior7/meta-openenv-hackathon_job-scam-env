@@ -1,3 +1,11 @@
+---
+title: Job Scam Env
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 8000
+---
 # Job Scam Detection Environment
 
 An OpenEnv-compatible RL environment for training and evaluating agents on job-scam detection.
