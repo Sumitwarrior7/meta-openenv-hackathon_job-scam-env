@@ -29,10 +29,10 @@ EASY_DATASET_FILENAME: str = "data_task_easy.jsonl"
 EASY_REWARD_MATRIX: Dict[str, Dict[str, float]] = {
     "legit": {
         "legit": 1.00,
-        "scam": -1.00,
+        "scam": 0,
     },
     "scam": {
-        "legit": -0.60,
+        "legit": 0.10,
         "scam": 1.00,
     },
 }

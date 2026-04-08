@@ -32,8 +32,8 @@ from constants import VALID_TASK_NAMES, EASY_MAX_STEPS, MEDIUM_MAX_STEPS, HARD_M
 # Configuration
 # ---------------------------------------------------------------------------
 load_dotenv()
-API_BASE_URL:  str           = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 API_KEY:       Optional[str] = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL:  str           = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME:    Optional[str] = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 LOCAL_IMAGE_NAME: Optional[str] = os.getenv("LOCAL_IMAGE_NAME", "job_scam_env:latest")
 HF_SPACE_URL:  Optional[str] = os.getenv("HF_SPACE_URL", "https://sumitwarrior7-job-scam-env.hf.space")
@@ -86,12 +86,15 @@ def log_end(
     success_str  = "true" if success else "false"
     print(
         f"[END] task={task} success={success_str} steps={steps} "
-        f"score={score:.4f}",
+        f"score={score}",
         flush=True,
     )
 
 def normalize_one(x):
     return int(x) if float(x) == 1.0 else x
+
+def normalize_zero(x):
+    return int(x) if float(x) == 0.0 else x
 
 # ---------------------------------------------------------------------------
 # System prompts (per task)
@@ -375,28 +378,30 @@ async def run_episode(
         if is_done:
             if task_name == "easy":
                 normalised_reward = reward
+                normalised_reward = normalize_one(normalize_zero(normalised_reward))
                 correct = obs.predicted_label == obs.actual_label
                 success = bool(correct)
                 print(f"\n  CLASSIFICATION RESULT")
-                print(f"    Step reward  : {reward:+.4f}")
+                print(f"    Step reward  : {normalised_reward}")
                 print(f"    Predicted    : {obs.predicted_label}")
                 print(f"    Actual       : {obs.actual_label}")
                 print(f"    Correct      : {correct}\n")
                 break
             elif task_name == "medium":
                 normalised_reward = reward
+                normalised_reward = normalize_one(normalize_zero(normalised_reward))
                 info = obs.info or {}
                 if obs.reason == "timeout":
                     success = False
                     print(f"\n  TIMEOUT — all steps exhausted without classifying.")
                     print(f"    Timeout penalty: {info['reward_breakdown']['timeout_penalty']:+.4f}")
-                    print(f"    Step Reward    : {reward:+.4f}")
+                    print(f"    Step Reward    : {normalised_reward}")
                     print(f"    Correct   : False")
                 else:
                     correct = obs.predicted_label == obs.actual_label
                     success = bool(correct)
                     print(f"\n  CLASSIFICATION RESULT")
-                    print(f"    Step reward  : {reward:+.4f}")
+                    print(f"    Step reward  : {normalised_reward}")
                     print(f"    Predicted : {obs.predicted_label}")
                     print(f"    Actual    : {obs.actual_label}")
                     print(f"    Correct   : {correct}")
@@ -456,7 +461,7 @@ async def main() -> None:
                     task=task_id,
                     success=success,
                     steps=steps_taken,
-                    score=normalize_one(normalised_reward),
+                    score=normalised_reward,
                     # rewards=rewards_list if rewards_list else [0.0],
                 )
                 print("\n\n")
