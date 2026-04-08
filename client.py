@@ -152,9 +152,6 @@ class JobScamEnv(EnvClient[JobScamAction, JobScamObservation, State]):
             available_context=obs_raw.get("available_context"),
 
             # ── EASY TASK — information request fields (placeholders) ──────────
-            # TODO: add easy-specific field deserialization here when designed
-            # Example:
-            #   easy_summary=obs_raw.get("easy_summary"),
 
             # ── HARD TASK — information request fields (placeholders) ──────────
             # TODO: add hard-specific field deserialization here when designed

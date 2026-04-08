@@ -52,6 +52,7 @@ class ActionType(str, Enum):
     # ── EASY TASK ────────────
     # TODO: uncomment / add when easy task is designed
     # REQUEST_EASY_FIELD_A = "request_easy_field_a"
+    CLASSIFY_EASY = "classify"
 
     # ── HARD TASK ────────────
     # TODO: uncomment / add when hard task is designed
@@ -75,6 +76,8 @@ class ClassificationLabel(str, Enum):
 
     # ── EASY TASK labels (placeholders) ─────────────────────────────────────
     # TODO: add easy-specific labels here if needed
+    SCAM_EASY = "scam"  # example only — replace with actual easy-task labels when designed
+    LEGIT_EASY = "legit"  # example only — replace with actual easy-task labels when designed
 
     # ── HARD TASK labels (placeholders) ─────────────────────────────────────
     # TODO: add hard-specific labels here if needed
