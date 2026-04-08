@@ -15,13 +15,6 @@ uv sync
 # Start the environment server
 uv run server
 
-# In a second terminal, run the inference agent
-export HF_TOKEN=<your_token>
-export MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct
-export API_BASE_URL=https://router.huggingface.co/v1
-python inference.py
-```
-
 Or with Docker:
 
 ```bash
@@ -80,7 +73,7 @@ step(classify(label))           exactly once, terminal
 ── OR ──
 
 step budget exhausted without classify → timeout
-  └─ Reward: −1.5,  done: true
+  └─ done: true
 ```
 
 Maximum steps per episode: **5** (4 info requests + 1 classify, or fewer).
@@ -140,7 +133,7 @@ signal_score(field) = (|red_categories| + |green_categories|) /
 |---|---|
 | Valid, non-redundant field (signal > 0) | `+0.10 × signal_score` |
 | Field already requested this episode | `−0.20` |
-| Field has zero signal (empty / N/A) | `−0.10` |
+| Field has zero signal (empty / N/A) | `−0.05` |
 
 ---
 
@@ -168,43 +161,13 @@ The asymmetric penalties reflect real-world stakes: calling a scam `legit` is ma
 
 ### Timeout
 
-If the agent exhausts all 5 steps without classifying:
-
-```
-timeout_penalty = −1.5
-```
+If the agent exhausts all 5 steps without classifying, there will be some timeout penalty.
 
 ---
 
 ## Observation contract
 
 The client never receives: ground truth label, field signal scores, red/green flag categories, or internal reward equations.
-
-```python
-# Reset observation
-obs.query_type          # str
-obs.initial_query       # str
-obs.available_context   # List[str]
-obs.step_budget         # {"total": 5, "used": 0, "remaining": 5}
-
-# Info request observation
-obs.requested_field     # str
-obs.field_content       # str
-obs.step_budget         # updated budget
-
-# Terminal (classification)
-obs.predicted_label     # str
-obs.actual_label        # str
-obs.step_budget         # final budget
-
-# Terminal (timeout)
-obs.episode_done        # True
-obs.reason              # "timeout"
-
-# All steps — reward breakdown in metadata
-obs.metadata["info"]["reward_breakdown"]   # dict
-obs.metadata["info"]["cumulative"]         # dict
-```
 
 ---
 
@@ -254,27 +217,13 @@ server/job_scam_env_environment.py
 
 ---
 
-## Project structure
-
-```
-job_scam_env/
-├── server/
-│   ├── app.py
-│   └── job_scam_env_environment.py
-├── client.py
-├── models.py
-├── inference.py
-├── Dockerfile
-├── openenv.yaml
-└── pyproject.toml
-```
-
----
-
 ## Environment variables (inference)
 
 | Variable | Description |
 |---|---|
+| `API_KEY/HF_TOKEN` | Authentication key (required by validator) |
 | `API_BASE_URL` | OpenAI-compatible API endpoint |
 | `MODEL_NAME` | Model identifier |
-| `HF_TOKEN` / `API_KEY` | Authentication key |
+| `ENV_URL` | URL of deployed Hugging Face Space |
+| `LOCAL_IMAGE_NAME` | Local Docker image name (for development only) |
+| `PORT` | Port used by the environment server (default: 8000) |
