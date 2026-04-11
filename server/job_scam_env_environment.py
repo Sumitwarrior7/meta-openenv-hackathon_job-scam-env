@@ -81,7 +81,7 @@ except ImportError:
     from hard_schema_mixin import HardSchemaMixin
     from constants import (
         VALID_TASK_NAMES,
-        EASY_DATASET_FILENAME,
+        EASY_DATASET_FILENAME, EASY_MAX_STEPS, EASY_REWARD_MATRIX, EASY_ACTION_TO_FIELD,
         MEDIUM_REWARD_MATRIX, MEDIUM_ACTION_TO_FIELD, MEDIUM_ALL_CONTEXT_FIELDS,
         MEDIUM_MAX_STEPS, MEDIUM_TIMEOUT_PENALTY, MEDIUM_DATASET_FILENAME,
         HARD_MAX_STEPS, HARD_TIMEOUT_PENALTY, HARD_DATASET_FILENAME,
@@ -261,7 +261,7 @@ class JobScamEnvironment(HardSchemaMixin, Environment):
         Raise ValueError if the action_type does not belong to the active task
         (and is not the universal CLASSIFY action).
         """
-        if action.action_type == ActionType.CLASSIFY or action.action_type == ActionType.CLASSIFY:
+        if action.action_type == ActionType.CLASSIFY:
             return  # always valid
 
         if self._task_name == "easy":
@@ -373,9 +373,6 @@ class JobScamEnvironment(HardSchemaMixin, Environment):
     # =========================================================================
     def _medium_reset(self) -> JobScamObservation:
         """Start a new medium-task episode with a randomly selected sample."""
-        if self._MEDIUM_DATASET is None:
-          self._MEDIUM_DATASET = _load_dataset(MEDIUM_DATASET_FILENAME)
-
         sample       = random.choice(self._MEDIUM_DATASET)
         field_scores = self._medium_compute_field_scores(sample)
 
