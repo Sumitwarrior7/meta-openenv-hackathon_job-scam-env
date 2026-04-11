@@ -601,27 +601,28 @@ class JobScamEnvironment(Environment):
     # HARD TASK implementation
     # =========================================================================
     def _hard_reset(self) -> JobScamObservation:
-        """
-        Start a new hard-task episode with trajectory-aware grading.
-        Medium task logic remains untouched.
-        """
-
         sample = random.choice(self._HARD_DATASET)
 
         self._episode = {
-            "sample": sample,
-            "requested_fields": set(),   # type: Set[str]
-            "used_steps": 0,
-            "max_steps": HARD_MAX_STEPS,
-            "total_reward": 0.0,
-            "done": False,
-            "scratchpad": {},
-        }
+        "sample": sample,
+        "requested_tools": [],        # ordered
+        "requested_tool_set": set(),  # redundancy
+        "used_steps": 0,
+        "max_steps": HARD_MAX_STEPS,
+        "total_reward": 0.0,
+        "done": False,
+        "scratchpad": {
+            "evidence_used": [],
+            "shortcut_flags": {},
+            "forbidden_shortcut_hits": [],
+            "final_action": None,
+        },
+    } 
 
         return JobScamObservation(
             task_name=self._task_name,
-            query_type=sample["query_type"],
-            initial_query=sample["initial_signal"],
+            query_type=sample.get("query_type"),
+            initial_query=sample.get("initial_signal"),
             available_context=HARD_ALL_CONTEXT_FIELDS,
             step_budget={
                 "total": HARD_MAX_STEPS,
@@ -635,53 +636,50 @@ class JobScamEnvironment(Environment):
         )
 
 
-    def _hard_handle_field_request(
-        self,
-        action: JobScamAction,
-    ) -> JobScamObservation:
-        """
-        Handle evidence retrieval step for hard task.
-        """
+    def _hard_handle_field_request(self, action: JobScamAction) -> JobScamObservation:
         field_name = HARD_ACTION_TO_FIELD[action.action_type.value]
         sample = self._episode["sample"]
-        print(f"Handling hard field request for '{field_name}'")
-        print(f"Available fields in sample:{sample}")
 
-        already_seen = field_name in self._episode["requested_fields"]
-
-        print(f"Already seen: {already_seen}")
-
-        # --------------------------------------------------------
-        # Reward retrieval
-        # --------------------------------------------------------
-        if already_seen:
-            step_reward = -0.10
+        env_state = sample.get("environment_state", {})
+        field_block = env_state.get(field_name, {})
+        if isinstance(field_block, dict):
+            field_content = field_block.get("content", "")
         else:
-            step_reward = 0.10
-            self._episode["requested_fields"].add(field_name)
+            field_content = field_block
 
-        field_content = sample["environment_state"].get(field_name, {})
-        
         if isinstance(field_content, (dict, list)):
-            field_content = json.dumps(field_content, indent=2)
-        
-        print(f"Field content: {field_content}")
+            field_content = json.dumps(field_content, ensure_ascii=False, indent=2)
 
+        already_seen = field_name in self._episode["requested_tool_set"]
 
+        before_tools = list(self._episode["requested_tools"])
+        before_scratchpad = json.loads(json.dumps(self._episode["scratchpad"]))
 
-        # Track evidence usage for grader
-        scratchpad = self._episode["scratchpad"]
-        scratchpad.setdefault("evidence_used", []).append(field_name)
-        print(f"Updated scratchpad: {scratchpad}")
+        if already_seen:
+            step_reward = -0.20
+            self._episode["scratchpad"]["forbidden_shortcut_hits"].append("redundant_tool")
+        else:
+            self._episode["requested_tools"].append(action.action_type.value)
+            self._episode["requested_tool_set"].add(field_name)
 
-        self._episode["total_reward"] = round(
-            self._episode["total_reward"] + step_reward,
-            4,
-        )
+            self._episode["scratchpad"][f"used_{field_name}"] = True
+
+            # keep evidence trace for grading
+            self._episode["scratchpad"]["evidence_used"].append({
+                "field": field_name
+            })
+
+            step_reward = self.hard_reward_engine.delta(
+                sample,
+                before_tools,
+                self._episode["requested_tools"],
+                before_scratchpad,
+                self._episode["scratchpad"],
+            )
+
+        self._episode["total_reward"] = round(self._episode["total_reward"] + step_reward, 4)
 
         budget = self._budget_dict()
-
-        # Timeout on last step
         if budget["remaining"] == 0:
             return self._hard_handle_timeout()
 
@@ -694,67 +692,45 @@ class JobScamEnvironment(Environment):
             done=False,
             reward=step_reward,
             info={
+                "reward_breakdown": {
+                    "step_reward": step_reward,
+                    "redundancy": already_seen,
+                },
                 "cumulative": {
                     "total_reward": self._episode["total_reward"]
-                }
+                },
             },
         )
 
 
-    def _hard_handle_classify(
-        self,
-        action: JobScamAction,
-    ) -> JobScamObservation:
-        """
-        Handle terminal classification for hard task.
-        Uses HardRewardEngine + HardTaskGrader.
-        """
+    def _hard_handle_classify(self, action: JobScamAction) -> JobScamObservation:
         predicted = action.label.value
         sample = self._episode["sample"]
-
         scratchpad = self._episode["scratchpad"]
 
-        # Final action state for reward + grader
         scratchpad["final_action"] = predicted
-        scratchpad[f"classified_as_{predicted}"] = True
 
-        # Convert requested fields back to action names
-        requested_tools = [
-            action_name
-            for action_name, field_name in HARD_ACTION_TO_FIELD.items()
-            if field_name in self._episode["requested_fields"]
-        ]
+        # Optional shortcut heuristics
+        if predicted == "legit" and "request_external_market_signals" not in self._episode["requested_tools"]:
+            scratchpad["shortcut_flags"]["classify_legit_from_domain_only"] = True
+            scratchpad["forbidden_shortcut_hits"].append("classify_legit_from_domain_only")
 
-        # --------------------------------------------------------
-        # Compute terminal reward
-        # --------------------------------------------------------
-        terminal_reward = self.hard_reward_engine.compute(
-            sample,
-            requested_tools,
-            scratchpad,
-        )
-
-        # --------------------------------------------------------
-        # Compute final grading
-        # --------------------------------------------------------
         grading = self.hard_grader.grade(
             sample,
-            requested_tools,
+            self._episode["requested_tools"],
             scratchpad,
         )
 
-        self._episode["total_reward"] = round(
-            self._episode["total_reward"] + terminal_reward,
-            4,
-        )
+        terminal_reward = grading["final_score"]  # already 0..1 normalized
+        self._episode["total_reward"] = round(self._episode["total_reward"] + terminal_reward, 4)
         self._episode["done"] = True
 
-        expected = sample["ground_truth"]["expected_final_actions"][0]
+        actual = (sample.get("ground_truth", {}).get("expected_final_actions") or [None])[0]
 
         return JobScamObservation(
             task_name=self._task_name,
             predicted_label=predicted,
-            actual_label=expected,
+            actual_label=actual,
             step_budget=self._budget_dict(),
             done=True,
             episode_done=True,
@@ -762,12 +738,14 @@ class JobScamEnvironment(Environment):
             reward=terminal_reward,
             info={
                 "grading": grading,
+                "reward_breakdown": {
+                    "terminal_reward": terminal_reward,
+                },
                 "cumulative": {
                     "total_reward": self._episode["total_reward"]
                 },
             },
         )
-
 
     def _hard_handle_timeout(self) -> JobScamObservation:
         """

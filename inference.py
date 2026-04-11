@@ -145,7 +145,13 @@ _SYSTEM_PROMPTS: Dict[str, str] = {
     """).strip(),
 
     "hard": textwrap.dedent("""
-        You are an expert job-scam investigator working on the HARD task.
+       You are an expert job-scam investigator solving the HARD task.
+
+        Your objective is to maximize reward by:
+        1) following the most evidence-efficient investigation path
+        2) avoiding redundant tools
+        3) avoiding forbidden shortcuts
+        4) classifying with the most accurate label possible
 
         VALID HARD ACTIONS
         ------------------
@@ -159,16 +165,30 @@ _SYSTEM_PROMPTS: Dict[str, str] = {
         {"action_type": "request_temporal_context"}
 
         TERMINAL ACTION
-        ----------------
+        ---------------
         {"action_type": "classify", "label": "<legit|suspicious|scam|insufficient_info>"}
 
-        RULES
-        -----
-        - Only use the exact hard actions above
-        - Never use medium actions
-        - Prefer sender + organization first
-        - Use minimum tools needed
-        - Output ONLY one valid JSON object
+        TOOL STRATEGY
+        -------------
+        - Pick the NEXT MOST INFORMATIVE tool only
+        - Prefer actions that directly validate the strongest suspicious signal
+        - Use the minimum number of tools needed
+        - Avoid repeating previously used tools
+        - Use external signals before classifying if money, urgency, phishing, Telegram, UPI, shortened links, or off-platform movement is present
+        - Use private conversation history when payment, urgency, slot booking, refundable token, or pressure tactics appear
+        - Use attached artifacts only when documents, offer letters, or screenshots are mentioned
+        - Do NOT over-investigate once enough evidence for classification exists
+
+        CLASSIFICATION STRATEGY
+        -----------------------
+        - If multiple strong scam indicators align, classify as "scam"
+        - If evidence strongly suggests fraud but one critical verification is missing, classify as "suspicious"
+        - If official channels strongly confirm authenticity and no payment / urgency indicators exist, classify as "legit"
+        - Use "insufficient_info" only when key verification evidence is missing
+
+        OUTPUT RULE
+        -----------
+        Output ONLY one valid JSON object.
     """).strip(),
 }
 
@@ -226,7 +246,7 @@ def _build_user_message(
     if obs.initial_query:
         parts.append(f"INITIAL QUERY:\n{obs.initial_query}")
 
-    if task_name in  ("medium", "hard"):
+    if task_name in  ("medium"):
         if obs.requested_field and obs.field_content:
             parts.append(f"\nFIELD JUST RECEIVED — {obs.requested_field.upper()}:")
             parts.append(obs.field_content)

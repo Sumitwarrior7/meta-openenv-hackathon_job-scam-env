@@ -284,11 +284,11 @@ class HardGradingLogic:
 
 @dataclass
 class HardGroundTruth:
-    required_steps: List[str]
     optimal_action_sequence: List[str]
     acceptable_alternative_sequences: List[List[str]]
     expected_final_actions: List[str]
-    must_not_do: List[str]
+    classification_credit: Dict[str, Dict[str, float]]
+    forbidden_shortcuts: List[str]
 
 
 @dataclass
