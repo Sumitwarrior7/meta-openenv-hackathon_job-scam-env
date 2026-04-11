@@ -5,3 +5,24 @@ runtime: fastapi
 app: server.app:app
 port: 8000
 
+tasks:
+  - id: task_easy
+    difficulty: easy
+    grader:
+      type: deterministic
+    description: >
+      A task for easy job scam detection with 1 step message classification.
+
+  - id: task_medium
+    difficulty: medium
+    grader:
+      type: deterministic
+    description: >
+      A task for medium job scam detection with upto 5 steps message classification.
+
+  - id: task_hard
+    difficulty: hard
+    grader:
+      type: deterministic
+    description: >
+      A task for hard job scam detection with upto 8 steps message classification.
